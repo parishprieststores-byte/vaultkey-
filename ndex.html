@@ -1,0 +1,343 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Vaultkey</title>
+<style>
+:root{--bg:#eef1f4;--surf:#fff;--ink:#14213d;--mut:#586478;--line:#d3d9e1;--acc:#0e6f78;--accink:#fff;--bad:#b3261e;--ok:#1d7a46;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0c1421;--surf:#162132;--ink:#e6ebf2;--mut:#94a1b5;--line:#2a374c;--acc:#4fc3cd;--accink:#06222a;--bad:#ff8a80;--ok:#7bd9a0;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0c1421;--surf:#162132;--ink:#e6ebf2;--mut:#94a1b5;--line:#2a374c;--acc:#4fc3cd;--accink:#06222a;--bad:#ff8a80;--ok:#7bd9a0;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:560px;margin:0 auto;padding:20px 16px 80px}
+h1,h2{font-family:Charter,"Iowan Old Style",Georgia,serif;margin:0 0 6px;line-height:1.2}
+h1{font-size:28px}h2{font-size:20px}
+p{margin:0 0 14px;color:var(--mut)}
+label{display:block;font-weight:600;font-size:14px;margin:14px 0 4px}
+input,textarea{width:100%;font:inherit;color:var(--ink);background:var(--surf);border:1px solid var(--line);border-radius:8px;padding:11px 12px}
+textarea{min-height:90px;resize:vertical}
+input:focus,textarea:focus,button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:14px}
+button{font:inherit;font-weight:600;border-radius:8px;border:1px solid var(--line);background:var(--surf);color:var(--ink);padding:10px 14px;cursor:pointer}
+button.p{background:var(--acc);color:var(--accink);border-color:var(--acc)}
+button.d{color:var(--bad)}
+button:disabled{opacity:.5;cursor:default}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.row>*{flex:1 1 auto}
+.top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:14px}
+.top .row{margin:0}.top .row>*{flex:0 0 auto}
+.card{background:var(--surf);border:1px solid var(--line);border-radius:10px;margin-top:10px;overflow:hidden}
+.card>.hd{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;cursor:pointer;gap:10px;background:none;border:0;width:100%;text-align:left;border-radius:0}
+.card .hd b{display:block}.card .hd span{color:var(--mut);font-size:14px;font-weight:400}
+.card .bd{padding:0 14px 14px;border-top:1px solid var(--line)}
+.kv{margin-top:12px}.kv small{display:block;color:var(--mut)}
+.kv div{word-break:break-all}
+.meter{height:6px;background:var(--line);border-radius:3px;margin-top:8px;overflow:hidden}
+.meter i{display:block;height:100%;width:0;background:var(--bad);transition:width .2s}
+.err{color:var(--bad);min-height:1.4em;margin:10px 0 0;font-size:14px}
+.dots{display:flex;gap:6px;flex-wrap:wrap;min-height:14px;margin:18px 0 6px}
+.dots i{width:10px;height:10px;border-radius:50%;background:var(--acc)}
+.panel{background:var(--surf);border:1px solid var(--line);border-radius:10px;padding:16px;margin-top:14px}
+.note{font-size:13px;color:var(--mut)}
+#gate{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50}
+#gate .panel{width:100%;max-width:420px;margin:0}
+#toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:20px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s}
+#toast.on{opacity:1}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<div id="toast" role="status"></div>
+<script>
+"use strict";
+const $=s=>document.querySelector(s), enc=new TextEncoder(), dec=new TextDecoder();
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const b64=u=>{let s="";u=new Uint8Array(u);for(let i=0;i<u.length;i++)s+=String.fromCharCode(u[i]);return btoa(s)};
+const unb64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+const ITER=600000, KEY="vaultkey.v1", IDLE=120000;
+const S={key:null,salt:null,iter:ITER,data:null,q:"",open:null,panel:null,edit:null,fails:0,wait:0,storeOK:true};
+
+/* storage */
+function load(){try{const s=localStorage.getItem(KEY);return s?JSON.parse(s):null}catch(e){return null}}
+function persist(b){try{localStorage.setItem(KEY,JSON.stringify(b));return true}catch(e){S.storeOK=false;return false}}
+
+/* crypto */
+async function derive(pw,salt,iter){
+  const base=await crypto.subtle.importKey("raw",enc.encode(pw),"PBKDF2",false,["deriveKey"]);
+  return crypto.subtle.deriveKey({name:"PBKDF2",salt,iterations:iter,hash:"SHA-256"},base,{name:"AES-GCM",length:256},false,["encrypt","decrypt"]);
+}
+async function seal(obj,key,salt,iter){
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,enc.encode(JSON.stringify(obj)));
+  return {v:1,kdf:"PBKDF2-SHA256",iter,salt:b64(salt),iv:b64(iv),ct:b64(ct)};
+}
+async function openBlob(blob,pw){
+  const salt=unb64(blob.salt),key=await derive(pw,salt,blob.iter);
+  const pt=await crypto.subtle.decrypt({name:"AES-GCM",iv:unb64(blob.iv)},key,unb64(blob.ct));
+  return {data:JSON.parse(dec.decode(pt)),key,salt,iter:blob.iter};
+}
+async function save(){const b=await seal(S.data,S.key,S.salt,S.iter);if(!persist(b))toast("Could not save in this browser")}
+
+/* helpers */
+const rid=()=>b64(crypto.getRandomValues(new Uint8Array(9))).replace(/[+/=]/g,"x");
+function rnd(n){const m=Math.floor(4294967296/n)*n;let x;do{x=crypto.getRandomValues(new Uint32Array(1))[0]}while(x>=m);return x%n}
+function gen(len=20){const set="abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%^&*-_+=?";let s="";for(let i=0;i<len;i++)s+=set[rnd(set.length)];return s}
+function bits(p){let pool=0;if(/[a-z]/.test(p))pool+=26;if(/[A-Z]/.test(p))pool+=26;if(/\d/.test(p))pool+=10;if(/[^A-Za-z0-9]/.test(p))pool+=32;return pool?Math.round(p.length*Math.log2(pool)):0}
+let tt,ct;
+function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("on");clearTimeout(tt);tt=setTimeout(()=>t.classList.remove("on"),2200)}
+async function copy(t,label){
+  try{await navigator.clipboard.writeText(t)}catch(e){const x=document.createElement("textarea");x.value=t;document.body.appendChild(x);x.select();try{document.execCommand("copy")}catch(_){}x.remove()}
+  toast((label||"Copied")+(label==="Backup copied"?"":". Clears in 20s"));
+  if(label!=="Backup copied"){clearTimeout(ct);ct=setTimeout(()=>{try{navigator.clipboard.writeText(" ")}catch(e){}},20000)}
+}
+function busy(btn,on,txt){if(!btn)return;btn.disabled=on;if(on){btn.dataset.t=btn.textContent;btn.textContent=txt||"Working…"}else if(btn.dataset.t)btn.textContent=btn.dataset.t}
+
+/* locking */
+let idle;
+function bump(){clearTimeout(idle);if(S.key)idle=setTimeout(lock,IDLE)}
+function lock(){S.key=null;S.data=null;S.open=null;S.panel=null;S.edit=null;S.q="";render()}
+["click","keydown","touchstart"].forEach(e=>addEventListener(e,bump,{passive:true}));
+let hiddenAt=0;
+document.addEventListener("visibilitychange",()=>{if(document.hidden)hiddenAt=Date.now();else if(S.key&&Date.now()-hiddenAt>60000)lock()});
+
+/* views */
+function render(){
+  const a=$("#app"),has=load();
+  if(!has&&!S.key){a.innerHTML=`
+    <h1>Create your vault</h1>
+    <p>Everything is encrypted on this device with your master password. Nobody else can read it, including us and your email provider. There is no reset: if you forget this password, the data cannot be recovered.</p>
+    ${S.storeOK?"":`<p class="err">This browser is blocking storage. Use backups to keep your data.</p>`}
+    <label for="mp">Master password (14+ characters)</label>
+    <input id="mp" type="password" autocomplete="new-password">
+    <div class="meter"><i id="mm"></i></div><div class="note" id="ms">&nbsp;</div>
+    <label for="mp2">Confirm master password</label>
+    <input id="mp2" type="password" autocomplete="new-password">
+    <div class="row"><button data-a="genmp">Generate a strong one</button><button class="p" data-a="create">Create vault</button></div>
+    <p class="err" id="err" role="alert"></p>`;
+    $("#mp").addEventListener("input",e=>meter(e.target.value));
+  } else if(!S.key){a.innerHTML=`
+    <h1>Vaultkey</h1>
+    <p>Locked. Enter your master password.</p>
+    <div class="dots" id="dots" aria-hidden="true"></div>
+    <label for="mp">Master password</label>
+    <input id="mp" type="password" autocomplete="current-password" autofocus>
+    <div class="row"><button class="p" data-a="unlock" id="ub">Unlock</button>${bioOn()?`<button data-a="bio">Use fingerprint or face</button>`:""}</div>
+    <p class="err" id="err" role="alert"></p>
+    <details class="note"><summary>Restore from a backup</summary>
+      <label for="rb">Paste backup text</label><textarea id="rb" class="mono"></textarea>
+      <div class="row"><button data-a="restorenew">Restore as new vault</button></div></details>`;
+    const i=$("#mp");i.addEventListener("input",()=>{$("#dots").innerHTML="<i></i>".repeat(Math.min(i.value.length,40))});
+    i.addEventListener("keydown",e=>{if(e.key==="Enter")act.unlock()});
+  } else {vaultView()}
+}
+function meter(v){const b=bits(v),m=$("#mm"),s=$("#ms");m.style.width=Math.min(100,b/1.2)+"%";m.style.background=b<70?"var(--bad)":b<90?"#c98a00":"var(--ok)";s.textContent=v?(b<70?"Weak":b<90?"Decent":"Strong")+" (about "+b+" bits)":" "}
+
+function vaultView(){
+  const a=$("#app");
+  a.innerHTML=`<div class="top"><h1>Vaultkey</h1><div class="row"><button data-a="new">Add</button><button data-a="panel" data-p="backup">Backup</button><button data-a="lock">Lock</button></div></div>
+  <div id="pn"></div>
+  <input id="q" type="search" placeholder="Search ${S.data.items.length} saved logins" value="${esc(S.q)}" aria-label="Search">
+  <div id="list"></div>`;
+  $("#q").addEventListener("input",e=>{S.q=e.target.value;list()});
+  panelView();list();
+}
+function list(){
+  const q=S.q.toLowerCase(),it=S.data.items.filter(i=>(i.name+i.user).toLowerCase().includes(q)).sort((a,b)=>a.name.localeCompare(b.name));
+  $("#list").innerHTML=it.length?it.map(i=>{const o=S.open===i.id;return `<div class="card"><button class="hd" data-a="tog" data-id="${i.id}" aria-expanded="${o}"><div><b>${esc(i.name)}</b><span>${esc(i.user)||"No username"}</span></div><span>${o?"Hide":"Show"}</span></button>${o?`<div class="bd">
+    <div class="kv"><small>Username</small><div>${esc(i.user)||"-"}</div></div>
+    <div class="kv"><small>Password</small><div class="mono" id="pw-${i.id}">••••••••••••</div></div>
+    ${i.notes?`<div class="kv"><small>Notes</small><div>${esc(i.notes)}</div></div>`:""}
+    <div class="row"><button data-a="cu" data-id="${i.id}">Copy username</button><button data-a="cp" data-id="${i.id}">Copy password</button><button data-a="rev" data-id="${i.id}">Reveal</button><button data-a="edit" data-id="${i.id}">Edit</button></div></div>`:""}</div>`}).join(""):`<p style="margin-top:18px">${S.data.items.length?"No matches.":"Nothing saved yet. Tap Add to store your first login."}</p>`;
+}
+function panelView(){
+  const p=$("#pn");if(!p)return;
+  if(S.panel==="edit"){const e=S.edit||{};p.innerHTML=`<div class="panel"><h2>${e.id?"Edit login":"New login"}</h2>
+    <label for="f1">Site or app</label><input id="f1" value="${esc(e.name)}">
+    <label for="f2">Username or email</label><input id="f2" value="${esc(e.user)}" autocapitalize="none">
+    <label for="f3">Password</label><input id="f3" class="mono" value="${esc(e.pass)}" autocomplete="off">
+    <label for="f4">Notes</label><textarea id="f4">${esc(e.notes)}</textarea>
+    <div class="row"><button data-a="gpw">Generate password</button><button class="p" data-a="saveitem">Save</button><button data-a="panel" data-p="">Cancel</button>${e.id?`<button class="d" data-a="del">Delete</button>`:""}</div>
+    <p class="err" id="err" role="alert"></p></div>`}
+  else if(S.panel==="backup"){p.innerHTML=`<div class="panel"><h2>Backup and sync</h2>
+    <p>A backup is your vault in encrypted form. Email it to yourself, keep it anywhere, and it stays unreadable without your master password.</p>
+    <label for="em">Your email (optional)</label><input id="em" type="email" placeholder="you@example.com" autocapitalize="none">
+    <div class="row"><button data-a="bcopy">Copy backup</button><button data-a="bshare">Share</button><button class="p" data-a="bmail">Email to myself</button></div>
+    <p class="note" style="margin-top:10px">To sync another device: email the backup to yourself, open Vaultkey there, and paste it under “Restore”. The email only ever holds scrambled text.</p>
+    <h2 style="margin-top:20px">Restore and merge</h2>
+    <label for="rb">Paste backup text</label><textarea id="rb" class="mono"></textarea>
+    <label for="rbp">Master password of that backup</label><input id="rbp" type="password" autocomplete="off">
+    <div class="row"><button data-a="merge">Merge into this vault</button></div>
+    <h2 style="margin-top:20px">Import from another manager</h2>
+    <p class="note">Export a CSV from Chrome, Bitwarden, 1Password or LastPass, then choose it here or paste it. Delete the CSV afterwards, since it is not encrypted.</p>
+    <input id="csvf" type="file" accept=".csv,text/csv">
+    <label for="csvt">Or paste CSV text</label><textarea id="csvt" class="mono"></textarea>
+    <div class="row"><button data-a="csv">Import logins</button></div>
+    <h2 style="margin-top:20px">Fingerprint or face unlock</h2>
+    <p class="note">Uses this device's passkey. Currently ${bioOn()?"on":"off"}. Your master password always still works.</p>
+    <label for="bp">Master password (to set up)</label><input id="bp" type="password" autocomplete="off">
+    <div class="row">${bioOn()?`<button class="d" data-a="biooff">Turn off</button>`:`<button data-a="bioon">Turn on</button>`}</div>
+    <h2 style="margin-top:20px">Change master password</h2>
+    <label for="n1">New master password (14+ characters)</label><input id="n1" type="password" autocomplete="new-password">
+    <label for="n2">Confirm</label><input id="n2" type="password" autocomplete="new-password">
+    <div class="row"><button data-a="chpw">Change password</button></div>
+    <h2 style="margin-top:20px">Erase vault</h2>
+    <label for="er">Type ERASE to delete everything on this device</label><input id="er" autocomplete="off">
+    <div class="row"><button class="d" data-a="erase">Erase vault</button><button data-a="panel" data-p="">Close</button></div>
+    <p class="err" id="err" role="alert"></p></div>`}
+  else p.innerHTML="";
+}
+const err=m=>{const e=$("#err");if(e)e.textContent=m||""};
+
+/* actions */
+const act={
+  genmp(){const g=gen(22);$("#mp").type="text";$("#mp2").type="text";$("#mp").value=g;$("#mp2").value=g;meter(g);err("Write this down somewhere safe now. It cannot be recovered.")},
+  async create(b){
+    const p=$("#mp").value;if(p.length<14)return err("Use at least 14 characters.");if(bits(p)<60)return err("Too predictable. Mix words, numbers and symbols, or generate one.");if(p!==$("#mp2").value)return err("The two passwords do not match.");
+    busy(b,true,"Creating…");err("");
+    try{S.salt=crypto.getRandomValues(new Uint8Array(16));S.iter=ITER;S.key=await derive(p,S.salt,ITER);S.data={items:[]};await save();bump();render()}
+    catch(e){busy(b,false);err("Your browser does not support the encryption this app needs.")}
+  },
+  async unlock(){
+    if(S.wait>Date.now())return err("Wait a few seconds before trying again.");
+    const b=$("#ub"),p=$("#mp").value;if(!p)return;busy(b,true,"Unlocking…");err("");
+    try{const r=await openBlob(load(),p);S.key=r.key;S.salt=r.salt;S.iter=r.iter;S.data=r.data;S.fails=0;bump();render()}
+    catch(e){S.fails++;S.wait=Date.now()+Math.min(2**S.fails,60)*1000;busy(b,false);err("Wrong master password.")}
+  },
+  lock,
+  panel(b){S.panel=b.dataset.p||null;S.edit=null;panelView()},
+  new(){S.panel="edit";S.edit={};panelView();$("#f1").focus()},
+  tog(b){S.open=S.open===b.dataset.id?null:b.dataset.id;list()},
+  cu(b){copy(S.data.items.find(i=>i.id===b.dataset.id).user)},
+  async cp(b){if(!(await ask()))return;copy(S.data.items.find(i=>i.id===b.dataset.id).pass)},
+  async rev(b){const hidden=$("#pw-"+b.dataset.id).textContent.startsWith("•");if(hidden&&!(await ask()))return;const el=$("#pw-"+b.dataset.id),i=S.data.items.find(x=>x.id===b.dataset.id);if(!el||!i)return;el.textContent=hidden?i.pass:"••••••••••••";b.textContent=hidden?"Hide":"Reveal"},
+  async edit(b){if(!(await ask()))return;S.panel="edit";S.edit={...S.data.items.find(i=>i.id===b.dataset.id)};panelView();scrollTo(0,0)},
+  gpw(){$("#f3").value=gen(20)},
+  async saveitem(){
+    const name=$("#f1").value.trim();if(!name)return err("Enter a site or app name.");
+    const e=S.edit||{},rec={id:e.id||rid(),name,user:$("#f2").value.trim(),pass:$("#f3").value,notes:$("#f4").value,t:Date.now()};
+    const i=S.data.items.findIndex(x=>x.id===rec.id);if(i>=0)S.data.items[i]=rec;else S.data.items.push(rec);
+    await save();S.panel=null;S.edit=null;S.open=rec.id;vaultView();toast("Saved")
+  },
+  async del(){if(!confirm("Delete this login permanently?"))return;S.data.items=S.data.items.filter(i=>i.id!==S.edit.id);await save();S.panel=null;S.edit=null;S.open=null;vaultView()},
+  bcopy(){const t=localStorage.getItem(KEY);if(!t)return err("Nothing to back up yet.");copy(t,"Backup copied")},
+  async bshare(){const t=localStorage.getItem(KEY);try{if(navigator.share)await navigator.share({title:"Vaultkey backup",text:t});else{copy(t,"Backup copied");toast("Sharing is not available here. Backup copied.")}}catch(e){}},
+  bmail(){const t=localStorage.getItem(KEY),to=$("#em").value.trim();let body=t;
+    if(t.length>1500){copy(t,"Backup copied");body="Paste the copied Vaultkey backup text here."}
+    location.href="mailto:"+encodeURIComponent(to)+"?subject="+encodeURIComponent("Vaultkey backup")+"&body="+encodeURIComponent(body)},
+  async merge(b){
+    err("");let blob;try{blob=JSON.parse($("#rb").value.trim());if(!blob.ct||!blob.salt)throw 0}catch(e){return err("That does not look like a Vaultkey backup.")}
+    busy(b,true,"Decrypting…");
+    try{const r=await openBlob(blob,$("#rbp").value);let n=0;
+      for(const it of r.data.items){const i=S.data.items.findIndex(x=>x.id===it.id);if(i<0){S.data.items.push(it);n++}else if((it.t||0)>(S.data.items[i].t||0)){S.data.items[i]=it;n++}}
+      await save();busy(b,false);toast(n+" login"+(n===1?"":"s")+" merged");S.panel=null;vaultView()}
+    catch(e){busy(b,false);err("Could not decrypt. Check the backup text and its master password.")}
+  },
+  async chpw(b){
+    const p=$("#n1").value;if(p.length<14)return err("Use at least 14 characters.");if(bits(p)<60)return err("Too predictable.");if(p!==$("#n2").value)return err("The two passwords do not match.");
+    busy(b,true,"Re-encrypting…");S.salt=crypto.getRandomValues(new Uint8Array(16));S.key=await derive(p,S.salt,ITER);S.iter=ITER;await save();try{localStorage.removeItem(BK)}catch(e){}busy(b,false);S.panel=null;vaultView();toast("Master password changed. Biometric unlock was turned off; old backups still use the old password.")
+  },
+  erase(){if($("#er").value!=="ERASE")return err("Type ERASE exactly to confirm.");try{localStorage.removeItem(KEY);localStorage.removeItem(BK)}catch(e){}lock()},
+  async restorenew(){
+    let blob;try{blob=JSON.parse($("#rb").value.trim());if(!blob.ct||!blob.salt)throw 0}catch(e){return err("That does not look like a Vaultkey backup.")}
+    if(!confirm("This replaces the vault on this device. Continue?"))return;persist(blob);try{localStorage.removeItem(BK)}catch(e){}render()
+  }
+};
+/* biometric unlock (WebAuthn PRF) */
+const BK="vaultkey.bio.v1";
+function bioOn(){try{return !!localStorage.getItem(BK)}catch(e){return false}}
+async function prf(id,salt){
+  const r=await navigator.credentials.get({publicKey:{challenge:crypto.getRandomValues(new Uint8Array(32)),allowCredentials:[{id,type:"public-key"}],userVerification:"required",timeout:60000,extensions:{prf:{eval:{first:salt}}}}});
+  const o=r.getClientExtensionResults().prf;
+  if(!o||!o.results||!o.results.first)throw new Error("noprf");
+  return crypto.subtle.importKey("raw",o.results.first,"AES-GCM",false,["encrypt","decrypt"]);
+}
+/* re-check identity before showing or copying a password */
+function ask(){
+  return new Promise(async res=>{
+    const tryBio=async()=>{try{const d=JSON.parse(localStorage.getItem(BK)),k=await prf(unb64(d.id),unb64(d.salt));await crypto.subtle.decrypt({name:"AES-GCM",iv:unb64(d.iv)},k,unb64(d.ct));return true}catch(e){return false}};
+    if(bioOn()&&await tryBio())return res(true);
+    const m=document.createElement("div");m.id="gate";m.setAttribute("role","dialog");m.setAttribute("aria-modal","true");
+    m.innerHTML=`<div class="panel"><h2>Confirm it’s you</h2><p>Enter your master password to continue.</p><input id="gp" type="password" autocomplete="current-password"><p class="err" id="ge" role="alert"></p><div class="row"><button data-g="x">Cancel</button>${bioOn()?`<button data-g="bio">Use fingerprint</button>`:""}<button class="p" data-g="ok">Confirm</button></div></div>`;
+    document.body.appendChild(m);
+    const gp=m.querySelector("#gp"),ge=m.querySelector("#ge");gp.focus();
+    const done=v=>{document.removeEventListener("keydown",esck);m.remove();res(v)};
+    const esck=e=>{if(e.key==="Escape")done(false)};document.addEventListener("keydown",esck);
+    const go=async()=>{
+      if(S.wait>Date.now()){ge.textContent="Wait a few seconds and try again.";return}
+      const b=m.querySelector('[data-g="ok"]');busy(b,true,"Checking…");
+      try{await openBlob(load(),gp.value);S.fails=0;done(true)}
+      catch(e){S.fails++;S.wait=Date.now()+Math.min(2**S.fails,60)*1000;busy(b,false);ge.textContent="Wrong master password."}
+    };
+    gp.addEventListener("keydown",e=>{if(e.key==="Enter")go()});
+    m.addEventListener("click",async e=>{const g=e.target.closest("[data-g]");if(!g)return;
+      if(g.dataset.g==="x")done(false);else if(g.dataset.g==="ok")go();else if(g.dataset.g==="bio"&&await tryBio())done(true)});
+  });
+}
+/* CSV import */
+function parseCSV(t){const rows=[];let r=[],f="",q=false;t=t.replace(/^\uFEFF/,"");
+  for(let i=0;i<t.length;i++){const c=t[i];
+    if(q){if(c==='"'){if(t[i+1]==='"'){f+='"';i++}else q=false}else f+=c}
+    else if(c==='"')q=true;
+    else if(c===","){r.push(f);f=""}
+    else if(c==="\n"||c==="\r"){if(c==="\r"&&t[i+1]==="\n")i++;r.push(f);f="";rows.push(r);r=[]}
+    else f+=c}
+  if(f!==""||r.length){r.push(f);rows.push(r)}
+  return rows.filter(x=>x.some(v=>v.trim()));
+}
+Object.assign(act,{
+  async csv(b){
+    err("");let t=$("#csvt").value;const fl=$("#csvf").files[0];
+    try{if(fl)t=await fl.text()}catch(e){return err("Could not read that file.")}
+    if(!t||!t.trim())return err("Choose a CSV file or paste its text.");
+    const rows=parseCSV(t),h=(rows.shift()||[]).map(x=>x.trim().toLowerCase());
+    const col=(...n)=>h.findIndex(x=>n.includes(x));
+    const iN=col("name","title"),iU=col("url","login_uri","website"),iL=col("username","login_username","login"),iP=col("password","login_password"),iO=col("note","notes","extra"),iT=col("type");
+    if(iP<0)return err("No password column found. Is this a logins export?");
+    let n=0;
+    for(const r of rows){
+      if(iT>=0&&r[iT]&&r[iT].trim().toLowerCase()!=="login")continue;
+      const user=(r[iL]||"").trim(),pass=r[iP]||"",url=(r[iU]||"").trim();
+      if(!user&&!pass)continue;
+      const name=((r[iN]||"").trim()||url||"Untitled");
+      if(S.data.items.some(x=>x.name===name&&x.user===user&&x.pass===pass))continue;
+      const notes=[url&&url!==name?"URL: "+url:"",iO>=0?(r[iO]||"").trim():""].filter(Boolean).join("\n");
+      S.data.items.push({id:rid(),name,user,pass,notes,t:Date.now()});n++;
+    }
+    await save();S.panel=null;vaultView();toast(n+" login"+(n===1?"":"s")+" imported");
+  },
+  async bioon(b){
+    err("");const p=$("#bp").value;if(!p)return err("Enter your master password first.");
+    if(!window.PublicKeyCredential)return err("This browser does not support passkeys.");
+    busy(b,true,"Waiting…");
+    try{
+      await openBlob(load(),p);
+      const cred=await navigator.credentials.create({publicKey:{rp:{name:"Vaultkey"},user:{id:crypto.getRandomValues(new Uint8Array(16)),name:"vault",displayName:"Vaultkey"},challenge:crypto.getRandomValues(new Uint8Array(32)),pubKeyCredParams:[{type:"public-key",alg:-7},{type:"public-key",alg:-257}],authenticatorSelection:{authenticatorAttachment:"platform",userVerification:"required",residentKey:"preferred"},extensions:{prf:{}}}});
+      const id=new Uint8Array(cred.rawId),salt=crypto.getRandomValues(new Uint8Array(32)),k=await prf(id,salt),iv=crypto.getRandomValues(new Uint8Array(12));
+      const ct=await crypto.subtle.encrypt({name:"AES-GCM",iv},k,enc.encode(p));
+      localStorage.setItem(BK,JSON.stringify({id:b64(id),salt:b64(salt),iv:b64(iv),ct:b64(ct)}));
+      busy(b,false);panelView();toast("Biometric unlock is on");
+    }catch(e){busy(b,false);err(e&&e.message==="noprf"?"This device or browser cannot do secure biometric unlock yet.":"Could not set it up here. Check the password, or this page may be blocking passkeys.")}
+  },
+  biooff(){try{localStorage.removeItem(BK)}catch(e){}panelView();toast("Biometric unlock is off")},
+  async bio(){
+    err("");
+    try{const d=JSON.parse(localStorage.getItem(BK)),k=await prf(unb64(d.id),unb64(d.salt));
+      const p=dec.decode(await crypto.subtle.decrypt({name:"AES-GCM",iv:unb64(d.iv)},k,unb64(d.ct)));
+      $("#mp").value=p;await act.unlock();
+    }catch(e){err("Biometric unlock did not work. Use your master password.")}
+  }
+});
+document.addEventListener("click",e=>{const b=e.target.closest("[data-a]");if(b&&act[b.dataset.a])act[b.dataset.a](b)});
+
+/* start */
+try{localStorage.setItem("vk.t","1");localStorage.removeItem("vk.t")}catch(e){S.storeOK=false}
+if(!window.crypto||!crypto.subtle)$("#app").innerHTML="<h1>Vaultkey</h1><p>This browser does not support secure encryption. Open the page in a recent Chrome, Safari or Firefox.</p>";
+else render();
+</script>
+</body>
+</html>
